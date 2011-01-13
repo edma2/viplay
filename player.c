@@ -6,6 +6,11 @@
 #define PIPE_WRITE      1
 #define CMD_MAX         150
 
+typedef struct {
+        int fd_read;
+        int fd_write;
+} Player;
+
 int player_init(int *fd_read, int *fd_write) {
         char *arglist[] = { "mplayer", "-slave", "-quiet", "-idle", NULL };
         int pipe_input[2];
@@ -82,7 +87,6 @@ int player_cmd_load(int fd_send, char *path) {
                 if (*path++ == '\0')
                         break;
         }
-
         return player_cmd(fd_send, cmd);
 }
 
