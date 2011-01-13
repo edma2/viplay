@@ -1,21 +1,12 @@
 /* mplayer_slave.c - mplayer interface for viplay
  * author: Eugene Ma (edma2) */
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdlib.h>
-#include <sys/wait.h>
-#include <sys/fcntl.h>
-#include <poll.h>
+#include "player.h"
 
-#define BUFSIZE         300
 #define PIPE_READ       0
 #define PIPE_WRITE      1
+#define CMD_MAX         150
 
-int mplayer_open(int *fd_read, int *fd_write);
-int mplayer_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, int recvlen);
-
-int mplayer_open(int *fd_read, int *fd_write) {
+int player_init(int *fd_read, int *fd_write) {
         char *arglist[] = { "mplayer", "-slave", "-quiet", "-idle", NULL };
         int pipe_input[2];
         int pipe_output[2];
@@ -62,11 +53,58 @@ int mplayer_open(int *fd_read, int *fd_write) {
         return -1;
 }
 
-int mplayer_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, int recvlen) {
+void player_deinit(int *fd_read, int *fd_write) {
+        wait(NULL); 
+        close(*fd_read);
+        close(*fd_write);
+}
+
+int player_cmd(int fd_send, char *buf_cmd) {
+        return (write(fd_send, buf_cmd, strlen(buf_cmd)) != strlen(buf_cmd)) ? -1 : 0;
+}
+
+int player_cmd_toggle(int fd_send) {
+        char *cmd = "pause\n";
+        return player_cmd(fd_send, cmd);
+}
+
+int player_cmd_quit(int fd_send) {
+        char *cmd = "quit\n";
+        return player_cmd(fd_send, cmd);
+}
+
+int player_cmd_load(int fd_send, char *path) {
+        char cmd[CMD_MAX] = "load ";
+        int i;
+
+        for (i = strlen(cmd); i < CMD_MAX; i++) {
+                cmd[i] = *path;
+                if (*path++ == '\0')
+                        break;
+        }
+
+        return player_cmd(fd_send, cmd);
+}
+
+/* Store len received bytes into buf_reply */
+int player_query_percent(int fd_send, int fd_recv, char *buf_reply, int len) {
+        char *cmd = "pausing get_percent_pos\n";
+        return player_query(fd_send, fd_recv, cmd, buf_reply, len);
+}
+
+int player_query_title(int fd_send, int fd_recv, char *buf_reply, int len) {
+        char *cmd = "pausing get_meta_title\n";
+        return player_query(fd_send, fd_recv, cmd, buf_reply, len);
+}
+
+int player_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, int len) {
         struct pollfd pfd;
         int i, j;
         char c;
 
+        /* Flush input */
+        while (read(fd_recv, &c, 1) > 0)
+                ;
         /* Write, wait, and read response */
         if (write(fd_send, buf_query, strlen(buf_query)) != strlen(buf_query))
                 return -1;
@@ -74,71 +112,24 @@ int mplayer_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, in
         pfd.events = POLLIN;
         if (poll(&pfd, 1, 500) < 0)
                 return -1;
-        /* Read only the first len bytes of stream
-         * and throw away the rest */
-        read(fd_recv, buf_reply, recvlen);
-        while (read(fd_recv, &c, 1) > 0)
-                ;
+        read(fd_recv, buf_reply, len);
 
-        /* Skip parsing if we don't request information */
-        if (strncmp("get_", buf_query, 4) != 0) {
-                buf_reply[0] = '\0';
-                return 0;
-        }
-
-        /* Find the equals sign */
-        for (i = 0; i < recvlen; i++) {
+        /* Parse the information we receive */
+        for (i = 0; i < len; i++) {
                 if (buf_reply[i] == '=')
                         break;
         }
         /* Skip first single quote, if present */
-        if (i+1 < recvlen && buf_reply[i+1] == '\'')
+        if (i+1 < len && buf_reply[i+1] == '\'')
                 i++;
         /* Read until the end */
-        for (j = 0; j < recvlen - i; j++) {
+        for (j = 0; j < len - i; j++) {
                 buf_reply[j] = buf_reply[++i];
                 /* Stop at either of these conditions */
                 if (buf_reply[i] == '\n' || buf_reply[i] == '\0' || buf_reply[i] == '\'')
                         break;
         }
         buf_reply[j] = '\0';
-
-        return 0;
-}
-
-int main(int argc, char *argv[]) {
-        char send[BUFSIZE];
-        char recv[BUFSIZE];
-        int fd_write, fd_read;
-
-        /* New process forked after this step */
-        if (mplayer_open(&fd_read, &fd_write) < 0) {
-                fprintf(stderr, "error: unable to run mplayer\n");
-                return -1;
-        }
-
-        /* Parent process only */
-        while (1) {
-                /* Read input from user */
-                printf("\n> ");
-                if (fgets(send, sizeof(send), stdin) == NULL)
-                        break;
-
-                /* Query mplayer */
-                if (mplayer_query(fd_write, fd_read, send, recv, sizeof(recv)) < 0) {
-                        fprintf(stderr, "error: communication error with mplayer\n");
-                        break;
-                }
-                /* Print reply */
-                printf("%s", recv);
-                if (strcmp(send, "quit\n") == 0)
-                        break;
-        }
-
-        /* Wait for child process to die */
-        wait(NULL); 
-        close(fd_read);
-        close(fd_write);
 
         return 0;
 }
