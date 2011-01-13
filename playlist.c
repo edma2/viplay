@@ -1,5 +1,7 @@
 #include "playlist.h"
 
+static void song_free_traverse_helper(void *data);
+
 int main(void) {
         Playlist *pl;
         Node *p;
@@ -36,9 +38,8 @@ void song_free(Song *s) {
         free(s);
 }
 
-int song_play(Song *s) {
-        // todo
-        return 0;
+int song_play(Player *mp, Song *s) {
+        return player_cmd_load(mp, s->path)
 }
 
 void song_print_path(Song *s) {

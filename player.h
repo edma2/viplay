@@ -8,12 +8,19 @@
 #include <sys/fcntl.h>
 #include <poll.h>
 
-int player_init(int *fd_read, int *fd_write);
-void player_deinit(int *fd_read, int *fd_write);
-int player_cmd(int fd_send, char *buf_cmd);
-int player_cmd_load(int fd_send, char *path);
-int player_cmd_toggle(int fd_send);
-int player_cmd_quit(int fd_send);
-int player_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, int recvlen);
-int player_query_percent(int fd_send, int fd_recv, char *buf_reply, int len);
-int player_query_title(int fd_send, int fd_recv, char *buf_reply, int len);
+typedef struct {
+        int fd_read;
+        int fd_write;
+} Player;
+
+Player *player_new(void);
+int player_init(Player *mp);
+void player_die(Player *mp);
+void player_free(Player *mp);
+int player_cmd(Player *mp, char *buf_cmd);
+int player_cmd_load(Player *mp, char *path);
+int player_cmd_pause(Player *mp);
+int player_cmd_quit(Player *mp);
+int player_query(Player *mp, char *buf_query, char *buf_reply, int len);
+int player_query_percent(Player *mp, char *buf_reply, int len);
+int player_query_title(Player *mp, char *buf_reply, int len);

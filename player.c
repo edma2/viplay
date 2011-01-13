@@ -6,12 +6,7 @@
 #define PIPE_WRITE      1
 #define CMD_MAX         150
 
-typedef struct {
-        int fd_read;
-        int fd_write;
-} Player;
-
-int player_init(int *fd_read, int *fd_write) {
+int player_init(Player *mp) {
         char *arglist[] = { "mplayer", "-slave", "-quiet", "-idle", NULL };
         int pipe_input[2];
         int pipe_output[2];
@@ -42,6 +37,7 @@ int player_init(int *fd_read, int *fd_write) {
                 /* Start mplayer */
                 execvp(arglist[0], arglist);
                 fprintf(stderr, "error: mplayer crashed\n");
+                return -1;
         } else if (cpid > 0) {
                 /* Close the pipe that the child reads from */
                 close(pipe_input[PIPE_READ]);
@@ -50,35 +46,52 @@ int player_init(int *fd_read, int *fd_write) {
                 /* Set the output stream from mplayer to non-blocking */
                 fcntl(pipe_output[PIPE_READ], F_SETFL, O_NONBLOCK);
                 /* Assign the read/write file descriptors to arguments */
-                *fd_read = pipe_output[PIPE_READ];
-                *fd_write = pipe_input[PIPE_WRITE];
-                return 0;
+                mp->fd_read = pipe_output[PIPE_READ];
+                mp->fd_write = pipe_input[PIPE_WRITE];
         }
 
-        return -1;
+        return 0;
 }
 
-void player_deinit(int *fd_read, int *fd_write) {
+Player *player_new(void) {
+        Player *mp;
+
+        mp = malloc(sizeof(Player));
+        if (mp == NULL)
+                return NULL;
+        mp->fd_read = -1;
+        mp->fd_write = -1;
+
+        return mp;
+}
+
+void player_free(Player *mp) {
+        free(mp);
+}
+
+void player_die(Player *mp) {
         wait(NULL); 
-        close(*fd_read);
-        close(*fd_write);
+        close(mp->fd_read);
+        close(mp->fd_write);
 }
 
-int player_cmd(int fd_send, char *buf_cmd) {
-        return (write(fd_send, buf_cmd, strlen(buf_cmd)) != strlen(buf_cmd)) ? -1 : 0;
+int player_cmd(Player *mp, char *buf_cmd) {
+        if (mp == NULL)
+                return -1;
+        return (write(mp->fd_write, buf_cmd, strlen(buf_cmd)) != strlen(buf_cmd)) ? -1 : 0;
 }
 
-int player_cmd_toggle(int fd_send) {
+int player_cmd_pause(Player *mp) {
         char *cmd = "pause\n";
-        return player_cmd(fd_send, cmd);
+        return player_cmd(mp, cmd);
 }
 
-int player_cmd_quit(int fd_send) {
+int player_cmd_quit(Player *mp) {
         char *cmd = "quit\n";
-        return player_cmd(fd_send, cmd);
+        return player_cmd(mp, cmd);
 }
 
-int player_cmd_load(int fd_send, char *path) {
+int player_cmd_load(Player *mp, char *path) {
         char cmd[CMD_MAX] = "load ";
         int i;
 
@@ -87,36 +100,39 @@ int player_cmd_load(int fd_send, char *path) {
                 if (*path++ == '\0')
                         break;
         }
-        return player_cmd(fd_send, cmd);
+        return player_cmd(mp, cmd);
 }
 
 /* Store len received bytes into buf_reply */
-int player_query_percent(int fd_send, int fd_recv, char *buf_reply, int len) {
+int player_query_percent(Player *mp, char *buf_reply, int len) {
         char *cmd = "pausing get_percent_pos\n";
-        return player_query(fd_send, fd_recv, cmd, buf_reply, len);
+        return player_query(mp, cmd, buf_reply, len);
 }
 
-int player_query_title(int fd_send, int fd_recv, char *buf_reply, int len) {
+int player_query_title(Player *mp, char *buf_reply, int len) {
         char *cmd = "pausing get_meta_title\n";
-        return player_query(fd_send, fd_recv, cmd, buf_reply, len);
+        return player_query(mp, cmd, buf_reply, len);
 }
 
-int player_query(int fd_send, int fd_recv, char *buf_query, char *buf_reply, int len) {
+int player_query(Player *mp, char *buf_query, char *buf_reply, int len) {
         struct pollfd pfd;
         int i, j;
         char c;
 
+        if (mp == NULL)
+                return -1;
+
         /* Flush input */
-        while (read(fd_recv, &c, 1) > 0)
+        while (read(mp->fd_read, &c, 1) > 0)
                 ;
         /* Write, wait, and read response */
-        if (write(fd_send, buf_query, strlen(buf_query)) != strlen(buf_query))
+        if (write(mp->fd_write, buf_query, strlen(buf_query)) != strlen(buf_query))
                 return -1;
-        pfd.fd = fd_recv;
+        pfd.fd = mp->fd_read;
         pfd.events = POLLIN;
         if (poll(&pfd, 1, 500) < 0)
                 return -1;
-        read(fd_recv, buf_reply, len);
+        read(mp->fd_read, buf_reply, len);
 
         /* Parse the information we receive */
         for (i = 0; i < len; i++) {
